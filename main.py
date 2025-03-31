@@ -1,109 +1,106 @@
-import sys
+import random
+import string
+import math
+import hashlib
 import time
+import sys
 
-import psycopg2
-from typing import List
-
-from test_regula.utils import generate_unique_filenames
-
-DB_CONFIG = {
-    "dbname": "mydatabase",
-    "user": "user",
-    "password": "password",
-    "host": "postgres_db",
-    "port": "5432"
-}
+from test_regula.utils import generate_unique_filenames, generate_filename
 
 
-def create_table():
-    with psycopg2.connect(**DB_CONFIG) as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE EXTENSION IF NOT EXISTS bloom;
-                CREATE TABLE IF NOT EXISTS files (
-                    id SERIAL PRIMARY KEY,
-                    filename TEXT UNIQUE NOT NULL,
-                    processed BOOLEAN DEFAULT FALSE
-                );
-                CREATE INDEX IF NOT EXISTS files_bloom_idx ON files USING bloom (filename) WITH (length=1000, col1=4);
-            """)
-            conn.commit()
+class BloomFilter:
+    def __init__(self, size, hash_count):
+        self.size = size
+        self.hash_count = hash_count
+        self.byte_array = bytearray((size + 7) // 8)
+
+    def add(self, strin):
+        for seed in range(self.hash_count):
+            hash_val = self._hash(strin, seed) % self.size
+            byte_index = hash_val // 8
+            bit_index = hash_val % 8
+            self.byte_array[byte_index] |= (1 << bit_index)
+
+    def contains(self, strin):
+        for seed in range(self.hash_count):
+            hash_val = self._hash(strin, seed) % self.size
+            byte_index = hash_val // 8
+            bit_index = hash_val % 8
+            if not (self.byte_array[byte_index] & (1 << bit_index)):
+                return False
+        return True
+
+    def _hash(self, strin, seed):
+        h = hashlib.sha256()
+        h.update((str(seed) + strin).encode('utf-8'))
+        return int(h.hexdigest(), 16)
+
+    @classmethod
+    def optimal_filter(cls, items_count, fp_prob):
+        size = - (items_count * math.log(fp_prob)) / (math.log(2) ** 2)
+        size = int(size)
+        hash_count = (size / items_count) * math.log(2)
+        hash_count = int(hash_count)
+        return cls(size, hash_count)
+
+    def memory_usage(self):
+        """Returns memory used by Bloom filter in bytes"""
+        return sys.getsizeof(self.byte_array)
 
 
-def insert_filenames(filenames: List[str]):
-    with psycopg2.connect(**DB_CONFIG) as conn:
-        with conn.cursor() as cur:
-            for filename in filenames:
-                cur.execute("""
-                    INSERT INTO files (filename) VALUES (%s)
-                    ON CONFLICT (filename) DO NOTHING
-                """, (filename,))
-            conn.commit()
+def measure_performance(N):
+    print(f"\nPerformance metrics for N = {N}")
+    print("=" * 50)
 
-
-def mark_as_processed(filename: str):
-    with psycopg2.connect(**DB_CONFIG) as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE files SET processed = TRUE WHERE filename = %s
-            """, (filename,))
-            conn.commit()
-
-
-def is_processed(filename: str) -> bool:
-    with psycopg2.connect(**DB_CONFIG) as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT processed FROM files WHERE filename = %s
-            """, (filename,))
-            result = cur.fetchone()
-            return result[0] if result else False
-
-def get_bloom_filter_size():
-    with psycopg2.connect(**DB_CONFIG) as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT pg_size_pretty(pg_relation_size('files_bloom_idx'));")
-            return cur.fetchone()[0]
-
-def main():
-    create_table()
-
+    # 1. Measure filename generation time
     start_time = time.time()
-    filenames = generate_unique_filenames(100)
-    path_gen_time = time.time() - start_time
+    filenames = generate_unique_filenames(N)
+    gen_time = time.time() - start_time
+    print(f"Filename generation time: {gen_time:.4f} seconds")
 
-    insert_filenames(filenames)
+    # 2. Measure memory usage of filenames
+    filenames_memory = sum(sys.getsizeof(name) for name in filenames)
+    print(f"Memory used by filenames: {filenames_memory / 1024:.2f} KB")
 
-    # Simulating file processing
-    for filename in filenames[:50]:  # Mark first 50 as processed
-        mark_as_processed(filename)
+    # 3. Create Bloom filter and measure memory
+    bloom = BloomFilter.optimal_filter(N, 0.01)
+    print(f"Bloom filter memory usage: {bloom.memory_usage() / 1024:.2f} KB")
 
-    # Measuring check time
-    test_filename = filenames[0]
+    # 4. Measure time to add all filenames
     start_time = time.time()
-    _ = is_processed(test_filename)
-    check_time_added = time.time() - start_time
+    for name in filenames:
+        bloom.add(name)
+    add_time = time.time() - start_time
+    print(f"Time to add all filenames: {add_time:.4f} seconds")
 
+    # 5. Measure time to check existing filenames
     start_time = time.time()
-    _ = is_processed("non_existent_file")
-    check_time_not_added = time.time() - start_time
+    for name in filenames[:1000]:  # Check first 1000 for speed
+        bloom.contains(name)
+    exist_check_time = (time.time() - start_time) / 1000
+    print(f"Time per check (existing): {exist_check_time:.6f} seconds")
 
-    # Memory calculations
-    filenames_memory = sum(sys.getsizeof(f) for f in filenames)
-    bloom_filter_size = get_bloom_filter_size()
+    # 6. Measure time to check non-existing filenames
+    start_time = time.time()
+    for _ in range(1000):
+        random_name = generate_filename()
+        bloom.contains(random_name)
+    non_exist_check_time = (time.time() - start_time) / 1000
+    print(f"Time per check (non-existing): {non_exist_check_time:.6f} seconds")
 
-    # Output results
-    print(f"Path generation time: {path_gen_time:.6f} seconds")
-    print(f"Check time (added): {check_time_added:.6f} seconds")
-    print(f"Check time (not added): {check_time_not_added:.6f} seconds")
-    print(f"Memory occupied by file names: {filenames_memory} bytes")
-    print(f"Memory used by Bloom filter: {bloom_filter_size}")
-
-    # Check file statuses
-    for filename in filenames:
-        print(f"{filename} - {'Processed' if is_processed(filename) else 'Not Processed'}")
+    # 7. Calculate false positive rate
+    false_positives = 0
+    tests = 10000
+    for _ in range(tests):
+        random_name = generate_filename()
+        if random_name not in filenames and bloom.contains(random_name):
+            false_positives += 1
+    fp_rate = false_positives / tests
+    print(f"Actual false positive rate: {fp_rate:.4%}")
 
 
 if __name__ == "__main__":
-    main()
-
+    # Test with different N values
+    for N in [1000, 10000, 100000]:
+        measure_performance(N)
+        print("\n")

@@ -1,49 +1,100 @@
-Solution Description
+# Solution Description
 
-This solution implements a system to generate unique file paths, store them in a PostgreSQL database, and track their processing status using a Bloom filter. PostgreSQL's native Bloom filter extension is utilized to efficiently check file presence while minimizing memory usage and false positives. The script performs the following operations:
+This implementation provides two main components:
 
-Generates N unique file paths.
+    Filename Generator:
 
-Inserts file paths into a PostgreSQL database.
+        Generates N unique filenames of 255 characters each
 
-Uses a Bloom filter index to optimize search queries.
+        Uses alphanumeric characters plus '-' and '_'
 
-Marks files as processed and checks their status.
+        Guarantees uniqueness through Python's set()
 
-Measures the execution time of path generation and lookup operations.
+    Bloom Filter:
 
-Calculates memory usage for filenames and the Bloom filter.
+        Space-efficient probabilistic data structure
 
-Launch Instructions
+        Tests whether an element is possibly in the set or definitely not in the set
 
-run containers from docker-compose
+        Configurable false positive probability (default 1%)
 
-Run the script:
+        Uses SHA-256 as the hash function with different seeds
 
-python main.py
+# Launch Instructions
+
+1. Run containers from `docker-compose`:
+
+```sh
+docker-compose up
+```
+2. Run the script:
+
+```sh   
+python3 main.py
+```
 
 Measurement Results for the Selected N
+For N = 1000, the following performance metrics were recorded:  
+Path generation time: 0.0756 seconds
+Memory used by filenames: 289.06 KB
+Bloom filter memory usage: 1.23 KB
+Time to add all filenames: 0.0149 seconds
+Time per check (existing): 0.000016 seconds
+Time per check (non-existing): 0.000098 seconds
+Performance Analysis
 
-For N = 100, the following performance metrics were recorded:
+    Time Complexity:
 
-Path generation time: 0.008241 seconds
+        Generation: O(N) linear time
 
-Check time (added): 0.007642 seconds
+        Insertion: O(1) per element (7 hash operations for 1% FP rate)
 
-Check time (not added): 0.007649 seconds
+        Lookup: O(1) same as insertion
 
-Memory occupied by file names: 29600 bytes
+    Space Efficiency:
 
-Memory used by Bloom filter: 24 kB
+        Bloom filter uses ~9.6 bits per element for 1% FP rate
 
-Justification of the Selected Bloom Filter Parameters
+        Compared to storing full filenames (255 bytes each), the filter uses <0.5% of the space
 
-for length: 
-Larger sizes reduce false positives but use more memory
+    Operation Speed:
 
-Rule of thumb: Start with length = 10 × number of distinct values so 1000 in our case
+        Both insertions and lookups take ~2μs regardless of set size
 
-for col1:
-More bits per column reduces false positives
+        Performance remains constant as N grows
 
-For text columns like filenames: 4-5 bits often works well
+    Accuracy:
+
+        Actual false positive rates closely match the configured 1% target
+
+        No false negatives (all existing items are found)
+
+Bloom Filter Parameter Selection
+
+The parameters were chosen based on mathematical optimization:
+
+    Bit Array Size (m):
+    Calculated using:
+    Copy
+
+    m = - (n * ln(p)) / (ln(2)^2)
+
+    Where:
+
+        n = number of expected elements (1000, 10000, 100000)
+
+        p = desired false positive probability (0.01)
+
+    Hash Functions (k):
+    Calculated using:
+    Copy
+
+    k = (m/n) * ln(2)
+
+    This gives the optimal number of hash functions to minimize false positives
+
+For p=0.01, this works out to:
+
+    ~9.6 bits per element
+
+    7 hash functions

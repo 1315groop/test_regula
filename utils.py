@@ -7,7 +7,6 @@ def generate_filename(length: int = 255) -> str:
     characters: str = string.ascii_letters + string.digits + '_-'
     return ''.join(random.choice(characters) for _ in range(length))
 
-
 def generate_unique_filenames(n: int) -> List[str]:
     filenames: Set[str] = set()
     while len(filenames) < n:
