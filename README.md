@@ -47,7 +47,7 @@ Performance Analysis
 
         Generation: O(N) linear time
 
-        Insertion: O(1) per element (7 hash operations for 1% FP rate)
+        Insertion: O(1) per element
 
         Lookup: O(1) same as insertion
 
@@ -56,12 +56,6 @@ Performance Analysis
         Bloom filter uses ~9.6 bits per element for 1% FP rate
 
         Compared to storing full filenames (255 bytes each), the filter uses <0.5% of the space
-
-    Operation Speed:
-
-        Both insertions and lookups take ~2μs regardless of set size
-
-        Performance remains constant as N grows
 
     Accuracy:
 
